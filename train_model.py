@@ -1,0 +1,344 @@
+import argparse
+from dataclasses import asdict, dataclass
+import math
+import os
+import torch
+import torch.nn as nn
+from training.loss.cross_entropy import cross_entropy, cross_entropy_masked
+from tokenization.bpe import Tokenizer
+from lm.training.utils.checkpointing import save_checkpoint
+from lm.training.utils.data_batching import load_batch, ConversationBatchLoader
+from lm.training.utils.gradient_clipping import clip_gradients
+from lm.training.utils.optimization import AdamW
+from lm.training.utils.scheduler import learning_rate_scheduler
+
+from model import transformer
+from torch.utils.tensorboard import SummaryWriter
+import numpy
+from datetime import datetime
+import wandb
+import time
+
+@dataclass
+class TrainingConfig:
+
+    batch_size: int
+    context_length: int
+    d_model: int                
+    vocab_size: int
+    num_heads: int
+    num_layers: int
+    d_ff: int
+    rope_theta: int
+    min_learning_rate: float
+    learning_rate: float
+    weight_decay: float
+    betas: tuple[float]
+    eps: float
+    training_steps: int
+    warmup_steps: int
+    gradient_limit: float
+    
+    checkpoint_interval: int
+    validation_interval: int
+
+    training_data_path: str
+    validation_data_path: str
+    finetuning_data_path: str | None
+    device: str
+    dtype: torch.device
+    compile: bool
+    
+
+def train(config: TrainingConfig):
+
+    model = transformer.TransformerLM(
+        d_model=config.d_model,
+        vocab_size=config.vocab_size,
+        context_length=config.context_length,
+        num_layers=config.num_layers,
+        num_heads=config.num_heads,
+        d_ff=config.d_ff,
+        rope_theta=config.rope_theta,
+        device=config.device,
+        dtype=config.dtype,
+    )
+
+    if config.compile:
+        model = torch.compile(model)
+
+    non_embedding_parameters = 0
+    for (name, param) in model.named_parameters():
+        print(f"{name} has {param.numel():,} parameters")
+        if "embedding" not in name:
+            non_embedding_parameters += param.numel()
+    num_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(f"Total Parameters: {num_parameters:,}")
+    print(f"Non-Embedding Parameters: {non_embedding_parameters:,}")
+
+    model.to(config.device)
+
+    optimizer = AdamW(
+        params=model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
+        betas=config.betas,
+        eps=config.eps
+    )
+
+    training_batch_loader = BatchLoader(
+        file_path=config.validation_data_path,
+        batch_size=config.batch_size,
+        context_length=config.context_length,
+        device=config.device
+    )
+
+    finetuning_batch_loader = ConversationBatchLoader(
+        file_path=config.training_data_path,
+        batch_size=config.batch_size,
+        context_length=config.context_length,
+        device=config.device,
+    )
+
+    # validation_batch_loader = BatchLoader(
+    #     file_path=config.validation_data_path,
+    #     batch_size=config.batch_size,
+    #     context_length=config.context_length,
+    #     device=config.device
+    # )
+
+    config_dict = asdict(config)
+    config_dict["num_params"] = num_parameters
+    config_dict["non_embedding_params"] = non_embedding_parameters
+    wandb_handler = wandb.init(entity="michael-ferris-1928-michael-ferris",
+                               project="LLM",
+                               config=config_dict)
+
+    current_time = datetime.now().strftime("%-m-%-d-%y_%H:%M")
+    tensorboard_writer = SummaryWriter(f"runs/experiment-{current_time}")
+    checkpointer = Checkpointer()
+
+    tokenizer = Tokenizer.from_files(vocab_filepath='output/openwebtext_vocab.json',
+                                     merges_filepath='output/openwebtext_merges.pkl')
+    
+    # train = torch.zeros((config.batch_size, config.context_length), dtype=torch.long, device=config.device)
+    # label = torch.zeros((config.batch_size, config.context_length), dtype=torch.long, device=config.device)
+
+    mfu_steps = 100
+
+    torch.mps.synchronize()
+    t0 = time.time()
+    mfu = 0.0
+
+    for step in range(config.training_steps):
+
+        print(f"Step: {step}")
+        # Put the model in training mode.
+        model.train()
+
+        # Determine the currrent learning rate.
+        lr = learning_rate_scheduler(
+            current_step=step,
+            max_rate=config.learning_rate,
+            min_rate=config.min_learning_rate,
+            cosine_annealing_iterations=config.training_steps,
+            warmup_iterations=config.warmup_steps,
+        )
+        optimizer.set_learning_rate(lr)
+
+        print(f"Learning rate: {lr}")
+
+        # Get a batch of data using the data loader
+ 
+        train, label, lengths = finetuning_batch_loader.load_batch()
+        output = model(train)
+        loss = cross_entropy_masked(output, label, train, lengths, me_token_id=1, them_token_id=2)
+
+        sequence = train[0]
+        token_list = sequence.tolist()
+        print(f"Data length: {lengths[0]}")
+        print(f"Data: {tokenizer.decode(token_list)}")
+
+        # Backpropogate and calculate gradients.
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Clip the gradients to some max total l2 norm.
+        clip_gradients(model.parameters(), config.gradient_limit)
+
+        # Optimize the gradients.
+        optimizer.step()
+
+        if step % mfu_steps == 0 and step > 0:
+            torch.mps.synchronize()
+            t1 = time.time()
+            dt = t1 - t0
+            t0 = t1
+
+            mfu = estimate_mfu(num_params=num_parameters, config=config, dt=dt)
+
+        tensorboard_writer.add_scalar("Loss-2/train", loss.item(), step)
+
+        perplexity = math.exp(loss.item())
+        wandb_handler.log({'loss': loss.item(), 'perplexity': perplexity, 'mfu': mfu}, step=step)
+        if step % config.checkpoint_interval == 0 and step > 0:
+            checkpointer.save_checkpoint(model, optimizer, step)
+        # if step % config.validation_interval == 0 and step > 0: 
+        #     model.eval()
+        #     with torch.no_grad():
+        #         validation_loss = calculate_validation_loss(
+        #             model=model,
+        #             loader=validation_batch_loader,
+        #         )
+        #         print(f"Validation loss: {validation_loss}")
+        #         tensorboard_writer.add_scalar("Loss-2/valid", validation_loss.item(), step)
+        #         wandb_handler.log({'val_loss': validation_loss.item()}, step=step)
+
+    return
+
+
+class Checkpointer():
+
+    def __init__(self):
+
+        self.start_time = datetime.now().strftime("%-m-%-d-%y_%H:%M")
+        os.makedirs(os.path.join("checkpoints", self.start_time), exist_ok=True)
+
+    def save_checkpoint(self, model, optimizer, iteration):
+
+        save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            iteration=iteration,
+            out=os.path.join("checkpoints", self.start_time, f"checkpoint_step_{iteration}")
+        )
+
+class BatchLoader:
+
+    def __init__(self, file_path: str, batch_size: int, context_length: int, device: torch.device):
+
+        self.file = numpy.memmap(file_path, dtype=numpy.uint16, mode='r')
+        self.batch_size = batch_size
+        self.context_length = context_length
+        self.device = device
+
+    def load_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
+
+        return load_batch(
+            self.file,
+            batch_size=self.batch_size,
+            context_length=self.context_length,
+            device=self.device
+        )
+    
+def calculate_validation_loss(model: nn.Module, loader: BatchLoader) -> float:
+
+    validation_data, validation_label = loader.load_batch()
+    validation_output = model(validation_data)
+
+    validation_loss = cross_entropy(validation_output, validation_label)
+
+    return validation_loss
+
+def estimate_mfu(num_params: int, config: TrainingConfig, dt: float) -> float:
+
+    num_layers = config.num_layers
+    num_heads = config.num_heads
+    head_dim = config.d_model // config.num_heads
+    seq_len = config.context_length
+    flops_actual = (num_params * 6) + (12 * num_layers * num_heads * head_dim * seq_len) 
+    flops_actual *= config.batch_size
+    flops_actual = flops_actual / dt
+
+    expected_h100_flops = {
+        torch.bfloat16: 1979e12,
+        torch.float32: 67e12,
+    }
+
+    expected_m3_max_flops = {
+        torch.float32: 14.2e12,
+        torch.float16: 28.4e12,
+    }
+
+    expected_flops = {
+        "cuda": expected_h100_flops,
+        "mps": expected_m3_max_flops,
+    }
+
+    device = config.device
+    dtype = config.dtype
+
+    flops_expected = expected_flops[device][dtype]
+
+    mfu = (flops_actual / flops_expected) * 100.0 * 100.0
+
+    print(f"Flops expected: {flops_expected:,}")
+    print(f"Flops actual:   {flops_actual:,}")
+    print(f"MFU:            {mfu}")
+
+    return mfu
+
+def main():
+
+    arguments = argparse.ArgumentParser(description="Train LLM")
+    arguments.add_argument("--batch-size", type=int, default=128, help="Number of batches per training step")
+    arguments.add_argument("--context-length", type=int, default=256, help="length of model's context length")
+    arguments.add_argument("--d-model", type=int, default=512, help="Dimension of model's embeddings")
+    arguments.add_argument("--vocab-size", type=int, default=32_000, help="Number of tokens in the model's vocab")
+    arguments.add_argument("--num-heads", type=int, default=16, help="Heads per attention mechanism in the model")
+    arguments.add_argument("--num-layers", type=int, default=4, help="Number of transformer layers in the model")
+    arguments.add_argument("--d-ff", type=int, default=1344, help="Dimension of the feedforward networks in the model")
+    arguments.add_argument("--rope-theta", type=int, default=10000, help="Constant used in RoPE rotation calculations")
+    arguments.add_argument("--min-learning-rate", type=float, default=3e-5, help="Slowest learning rate")
+    arguments.add_argument("--learning-rate", type=float, default=3e-4, help="Nominal learning rate")
+    arguments.add_argument("--weight-decay", type=float, default=0.01, help="Weight decay rate for AdamW optimization")
+    arguments.add_argument("--beta1", type=float, default=0.9, help="Beta1 constant for AdamW Optimization")
+    arguments.add_argument("--beta2", type=float, default=0.95, help="Beta2 constant for AdamW Optimization")
+    arguments.add_argument("--epsilon", type=float, default=1e-5, help="Epsilon cosntant for AdamW Optimization")
+    arguments.add_argument("--training-steps", type=int, default=10_000, help="Number of training iterations to run")
+    arguments.add_argument("--warmup-steps", type=int, default=100, help="Number of steps to ramp up to nominal learning rate")
+    arguments.add_argument("--gradient-limit", type=int, default=1.0, help="L2 norm of gradients above which clipping will occur")
+    arguments.add_argument("--training-data-path", type=str, required=True, help="Path to training data (.npy)")
+    arguments.add_argument("--validation-data-path", type=str, required=False, help="Path to validation data (.npy)")
+    arguments.add_argument("--checkpoint-interval", type=int, default=500, help="Save checkpoint every n training steps")
+    arguments.add_argument("--validation-interval", type=int, default=100, help="Calculate validation loss every n training steps")
+    arguments.add_argument("--device", type=str, default="mps", help="Device on which to train model")
+    arguments.add_argument("--dtype", type=torch.dtype, default=torch.float32, help="Data type for model weights")
+    arguments.add_argument("--compile", type=bool, default=False, help="Compile the model before training")
+    arguments.add_argument("--finetuning-data-path", type=str, default=None, help="Datapath for finetuning data")
+
+    args = arguments.parse_args()
+
+    config = TrainingConfig(
+        batch_size=args.batch_size,
+        context_length=args.context_length,
+        d_model=args.d_model,
+        vocab_size=args.vocab_size,
+        num_heads=args.num_heads,
+        num_layers=args.num_layers,
+        d_ff=args.d_ff,
+        rope_theta=args.rope_theta,
+        min_learning_rate=args.min_learning_rate,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        betas=[args.beta1, args.beta2],
+        eps=args.epsilon,
+        training_steps=args.training_steps,
+        warmup_steps=args.warmup_steps,
+        gradient_limit=args.gradient_limit,
+        checkpoint_interval=args.checkpoint_interval,
+        validation_interval=args.validation_interval,
+        training_data_path=args.training_data_path,
+        validation_data_path=args.validation_data_path,
+        finetuning_data_path=args.finetuning_data_path,
+        device=args.device,
+        dtype=args.dtype,
+        compile=args.compile
+    )
+
+    print(f"Training with config: {config}")
+    train(config=config)
+
+if __name__ == "__main__":
+    main()
