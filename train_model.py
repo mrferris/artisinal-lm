@@ -4,15 +4,15 @@ import math
 import os
 import torch
 import torch.nn as nn
-from training.loss.cross_entropy import cross_entropy, cross_entropy_masked
-from tokenization.bpe import Tokenizer
+from lm.training.loss.cross_entropy import cross_entropy, cross_entropy_masked
+from lm.tokenization.bpe import Tokenizer
 from lm.training.utils.checkpointing import save_checkpoint
 from lm.training.utils.data_batching import load_batch, ConversationBatchLoader
 from lm.training.utils.gradient_clipping import clip_gradients
-from lm.training.utils.optimization import AdamW
+from lm.training.optimization.adamw import AdamW
 from lm.training.utils.scheduler import learning_rate_scheduler
 
-from model import transformer
+from lm.model import transformer
 from torch.utils.tensorboard import SummaryWriter
 import numpy
 from datetime import datetime
@@ -87,26 +87,19 @@ def train(config: TrainingConfig):
         eps=config.eps
     )
 
-    training_batch_loader = BatchLoader(
-        file_path=config.validation_data_path,
-        batch_size=config.batch_size,
-        context_length=config.context_length,
-        device=config.device
-    )
-
-    finetuning_batch_loader = ConversationBatchLoader(
+    training_data_loader = ConversationBatchLoader(
         file_path=config.training_data_path,
         batch_size=config.batch_size,
         context_length=config.context_length,
         device=config.device,
     )
 
-    # validation_batch_loader = BatchLoader(
-    #     file_path=config.validation_data_path,
-    #     batch_size=config.batch_size,
-    #     context_length=config.context_length,
-    #     device=config.device
-    # )
+    validation_batch_loader = ConversationBatchLoader(
+        file_path=config.validation_data_path,
+        batch_size=config.batch_size,
+        context_length=config.context_length,
+        device=config.device
+    )
 
     config_dict = asdict(config)
     config_dict["num_params"] = num_parameters
@@ -119,19 +112,16 @@ def train(config: TrainingConfig):
     tensorboard_writer = SummaryWriter(f"runs/experiment-{current_time}")
     checkpointer = Checkpointer()
 
-    tokenizer = Tokenizer.from_files(vocab_filepath='output/openwebtext_vocab.json',
-                                     merges_filepath='output/openwebtext_merges.pkl')
+    tokenizer = Tokenizer.from_files(vocab_filepath='data/vocab/imessages_vocab.json',
+                                     merges_filepath='data/vocab/imessages_merges.pkl')
     
-    # train = torch.zeros((config.batch_size, config.context_length), dtype=torch.long, device=config.device)
-    # label = torch.zeros((config.batch_size, config.context_length), dtype=torch.long, device=config.device)
-
     mfu_steps = 100
 
     torch.mps.synchronize()
     t0 = time.time()
     mfu = 0.0
 
-    for step in range(config.training_steps):
+    for step in range(1, config.training_steps+1):
 
         print(f"Step: {step}")
         # Put the model in training mode.
@@ -151,7 +141,7 @@ def train(config: TrainingConfig):
 
         # Get a batch of data using the data loader
  
-        train, label, lengths = finetuning_batch_loader.load_batch()
+        train, label, lengths = training_data_loader.load_batch()
         output = model(train)
         loss = cross_entropy_masked(output, label, train, lengths, me_token_id=1, them_token_id=2)
 
@@ -170,7 +160,7 @@ def train(config: TrainingConfig):
         # Optimize the gradients.
         optimizer.step()
 
-        if step % mfu_steps == 0 and step > 0:
+        if step % mfu_steps == 0:
             torch.mps.synchronize()
             t1 = time.time()
             dt = t1 - t0
@@ -182,18 +172,18 @@ def train(config: TrainingConfig):
 
         perplexity = math.exp(loss.item())
         wandb_handler.log({'loss': loss.item(), 'perplexity': perplexity, 'mfu': mfu}, step=step)
-        if step % config.checkpoint_interval == 0 and step > 0:
+        if step % config.checkpoint_interval == 0:
             checkpointer.save_checkpoint(model, optimizer, step)
-        # if step % config.validation_interval == 0 and step > 0: 
-        #     model.eval()
-        #     with torch.no_grad():
-        #         validation_loss = calculate_validation_loss(
-        #             model=model,
-        #             loader=validation_batch_loader,
-        #         )
-        #         print(f"Validation loss: {validation_loss}")
-        #         tensorboard_writer.add_scalar("Loss-2/valid", validation_loss.item(), step)
-        #         wandb_handler.log({'val_loss': validation_loss.item()}, step=step)
+        if step % config.validation_interval == 0: 
+            model.eval()
+            with torch.no_grad():
+                 validation_loss = calculate_validation_loss(
+                     model=model,
+                     loader=validation_batch_loader,
+                 )
+                 print(f"Validation loss: {validation_loss}")
+                 tensorboard_writer.add_scalar("Loss-2/valid", validation_loss.item(), step)
+                 wandb_handler.log({'val_loss': validation_loss.item()}, step=step)
 
     return
 
@@ -234,10 +224,10 @@ class BatchLoader:
     
 def calculate_validation_loss(model: nn.Module, loader: BatchLoader) -> float:
 
-    validation_data, validation_label = loader.load_batch()
+    validation_data, validation_label, lengths = loader.load_batch()
     validation_output = model(validation_data)
 
-    validation_loss = cross_entropy(validation_output, validation_label)
+    validation_loss = cross_entropy_masked(validation_output, validation_label, validation_data, lengths, me_token_id=1, them_token_id=2)
 
     return validation_loss
 
