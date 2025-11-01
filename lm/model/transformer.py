@@ -97,3 +97,21 @@ class TransformerLM(nn.Module):
         output = self.output_embedding(output)
 
         return output
+
+    def param_count(self) -> tuple[int, int]:
+        """
+        Get the param count of the model.
+        Returns:
+            A 2-element tuple containing:
+            - param count including embedding params
+            - param count not including embedding params
+        """
+
+        non_embedding_parameters = 0
+        for (name, param) in self.named_parameters():
+            print(f"{name} has {param.numel():,} parameters")
+            if "embedding" not in name:
+                non_embedding_parameters += param.numel()
+        num_parameters = sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+        return [num_parameters, non_embedding_parameters]

@@ -67,16 +67,6 @@ def train(config: TrainingConfig):
     if config.compile:
         model = torch.compile(model)
 
-    non_embedding_parameters = 0
-    for (name, param) in model.named_parameters():
-        print(f"{name} has {param.numel():,} parameters")
-        if "embedding" not in name:
-            non_embedding_parameters += param.numel()
-    num_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    print(f"Total Parameters: {num_parameters:,}")
-    print(f"Non-Embedding Parameters: {non_embedding_parameters:,}")
-
     model.to(config.device)
 
     optimizer = AdamW(
@@ -101,9 +91,10 @@ def train(config: TrainingConfig):
         device=config.device
     )
 
+    param_counts = model.param_count()
     config_dict = asdict(config)
-    config_dict["num_params"] = num_parameters
-    config_dict["non_embedding_params"] = non_embedding_parameters
+    config_dict["num_params"] = param_counts[0]
+    config_dict["non_embedding_params"] = param_counts[1]
     wandb_handler = wandb.init(entity="michael-ferris-1928-michael-ferris",
                                project="LLM",
                                config=config_dict)
@@ -117,7 +108,7 @@ def train(config: TrainingConfig):
     
     mfu_steps = 100
 
-    torch.mps.synchronize()
+    synchronize_accelerator(config.device)
     t0 = time.time()
     mfu = 0.0
 
@@ -161,7 +152,7 @@ def train(config: TrainingConfig):
         optimizer.step()
 
         if step % mfu_steps == 0:
-            torch.mps.synchronize()
+            synchronize_accelerator(config.device)
             t1 = time.time()
             dt = t1 - t0
             t0 = t1
@@ -221,7 +212,15 @@ class BatchLoader:
             context_length=self.context_length,
             device=self.device
         )
-    
+
+def synchronize_accelerator(device: torch.device):
+
+    if device.type == "mps":
+        torch.mps.synchronize()
+    elif device.type == "cuda":
+        torch.cuda.synchronize()
+
+
 def calculate_validation_loss(model: nn.Module, loader: BatchLoader) -> float:
 
     validation_data, validation_label, lengths = loader.load_batch()
