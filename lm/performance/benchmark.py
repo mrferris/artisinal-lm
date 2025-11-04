@@ -2,7 +2,8 @@ import argparse
 from dataclasses import dataclass
 from lm.training.loss.cross_entropy import cross_entropy
 from lm.model.transformer import TransformerLM
-from timeit import timeit
+import timeit
+import statistics
 import torch
 
 @dataclass
@@ -23,9 +24,7 @@ class BenchmarkConfig:
     d_ff: int
     rope_theta: int
     device: torch.device
-    dtype: torch.dtype
     compile: bool
-
 
 def benchmark(config: BenchmarkConfig):
     """
@@ -39,7 +38,7 @@ def benchmark(config: BenchmarkConfig):
     print(
         f"  d_model={config.d_model}, vocab_size={config.vocab_size}, context_length={config.context_length}\n"
         f"  num_layers={config.num_layers}, num_heads={config.num_heads}, d_ff={config.d_ff}, rope_theta={config.rope_theta}\n"
-        f"  device={config.device}, dtype={config.dtype}, batch_size={config.batch_size},"        
+        f"  device={config.device}, compile={config.compile}, batch_size={config.batch_size},"
     )
     model = TransformerLM(
         d_model=config.d_model,
@@ -49,30 +48,35 @@ def benchmark(config: BenchmarkConfig):
         num_heads=config.num_heads,
         d_ff=config.d_ff,
         rope_theta=config.rope_theta,
-        device=config.device,
-        dtype=config.dtype,
+        device=config.device
     )
-    model.to(config.device)
-    print(f"Non-embedding param count: {model.param_count[1]}")
+    print(f"Non-embedding param count: {model.param_count()[1]:,}")
+    print("============================================")
 
-    input = torch.rand(config.batch_size, config.context_length, config.d_model)
-    desired_output = torch.rand(config.batch_size, config.context_length, config.d_model)
+    input = torch.randint(low=0, high=config.vocab_size-1, size=(config.batch_size, config.context_length))
+    desired_output = torch.randint(low=0, high=config.vocab_size-1, size=(config.batch_size, config.context_length))
+
+    model.to(config.device)
+    input.to(config.device)
+    desired_output.to(config.device)
     
     # Warmup steps
     for _ in range(config.warmup_steps):
-
-        output = model(input)        
-        if config.forward_only:
-            continue
-        loss = cross_entropy(output, desired_output)
-        loss.backward()        
+        model_step(model, input, desired_output, config.forward_only)
 
     # Benchmarking
-    for _ in range(config.benchmark_steps):
+    times = timeit.repeat(lambda: model_step(model, input, desired_output, config.forward_only), number=1, repeat=config.benchmark_steps)
+    mean = statistics.mean(times)
+    stdev = statistics.stdev(times)
 
-        output = model(input)
-        if config.forward_only:
-            continue
+    print(f"Times: {times}")
+    print(f"Mean: {mean} seconds")
+    print(f"Std dev: {stdev} seconds")
+
+def model_step(model, input, desired_output, forward_only):
+
+    output = model(input)
+    if forward_only:
         loss = cross_entropy(output, desired_output)
         loss.backward()
 
@@ -86,11 +90,12 @@ if __name__ == "__main__":
     arguments.add_argument("--num-heads", type=int, default=16, help="Heads per attention mechanism in the model")
     arguments.add_argument("--num-layers", type=int, default=4, help="Number of transformer layers in the model")
     arguments.add_argument("--d-ff", type=int, default=1344, help="Dimension of the feedforward networks in the model")
-    arguments.add_argument("--rope-theta", type=int, default=10000, help="Constant used in RoPE rotation calculations")
+    arguments.add_argument("--rope-theta", type=int, default=10_000, help="Constant used in RoPE rotation calculations")
     arguments.add_argument("--warmup-steps", type=int, default=5, help="Number of steps before beginning benchamrk measurements")
     arguments.add_argument("--benchmark-steps", type=int, default=10, help="Number of steps to benchmark")
     arguments.add_argument("--forward-only", type=bool, default=False, help="Run benchmarking on forward passes only, not backward")
     arguments.add_argument("--device", type=str, default="cuda", help="Device on which to run benchmarks")
+    arguments.add_argument("--compile", type=bool, default="True", help="Whether to torch.compile the model")
     args = arguments.parse_args()
 
     config = BenchmarkConfig(
@@ -106,7 +111,7 @@ if __name__ == "__main__":
         d_ff=args.d_ff,
         rope_theta=args.rope_theta,
         device=args.device,
-        dtype=args.dtype
+        compile=args.compile
     )
 
     benchmark(config=config)

@@ -106,10 +106,8 @@ class TransformerLM(nn.Module):
             - param count including embedding params
             - param count not including embedding params
         """
-
         non_embedding_parameters = 0
         for (name, param) in self.named_parameters():
-            print(f"{name} has {param.numel():,} parameters")
             if "embedding" not in name:
                 non_embedding_parameters += param.numel()
         num_parameters = sum(p.numel() for p in self.parameters() if p.requires_grad)
