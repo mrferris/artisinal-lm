@@ -7,7 +7,7 @@ from lm.model.linear import RMSNorm, Embedding, Linear
 
 class Transformer(nn.Module):
     
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, rope: Rope, device=torch.device, dtype=torch.dtype):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, rope: Rope, device: torch.device, dtype: torch.dtype):
 
         super().__init__()
 
