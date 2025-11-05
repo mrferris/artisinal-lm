@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import dataclass
+from lm.performance.utils import synchronize_accelerator
 from lm.training.loss.cross_entropy import cross_entropy
 from lm.model.transformer import TransformerLM
 import timeit
@@ -79,6 +80,8 @@ def model_step(model, input, desired_output, forward_only):
     if forward_only:
         loss = cross_entropy(output, desired_output)
         loss.backward()
+
+    synchronize_accelerator(config.device)
 
 if __name__ == "__main__":
 

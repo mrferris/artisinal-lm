@@ -13,6 +13,8 @@ from lm.training.optimization.adamw import AdamW
 from lm.training.utils.scheduler import learning_rate_scheduler
 
 from lm.model import transformer
+from lm.performance.utils import estimate_mfu, synchronize_accelerator
+
 from torch.utils.tensorboard import SummaryWriter
 import numpy
 from datetime import datetime
@@ -46,7 +48,7 @@ class TrainingConfig:
     validation_data_path: str
     finetuning_data_path: str | None
     device: str
-    dtype: torch.device
+    dtype: torch.dtype
     compile: bool
     
 
@@ -157,7 +159,11 @@ def train(config: TrainingConfig):
             dt = t1 - t0
             t0 = t1
 
-            mfu = estimate_mfu(num_params=param_counts[1], config=config, dt=dt)
+            mfu = estimate_mfu(
+                num_params=param_counts[1], 
+                model=model,
+                dt=dt
+            )
 
         tensorboard_writer.add_scalar("Loss-2/train", loss.item(), step)
 
@@ -213,14 +219,6 @@ class BatchLoader:
             device=self.device
         )
 
-def synchronize_accelerator(device: torch.device):
-
-    if device.type == "mps":
-        torch.mps.synchronize()
-    elif device.type == "cuda":
-        torch.cuda.synchronize()
-
-
 def calculate_validation_loss(model: nn.Module, loader: BatchLoader) -> float:
 
     validation_data, validation_label, lengths = loader.load_batch()
@@ -230,43 +228,6 @@ def calculate_validation_loss(model: nn.Module, loader: BatchLoader) -> float:
 
     return validation_loss
 
-def estimate_mfu(num_params: int, config: TrainingConfig, dt: float) -> float:
-
-    num_layers = config.num_layers
-    num_heads = config.num_heads
-    head_dim = config.d_model // config.num_heads
-    seq_len = config.context_length
-    flops_actual = (num_params * 6) + (12 * num_layers * num_heads * head_dim * seq_len) 
-    flops_actual *= config.batch_size
-    flops_actual = flops_actual / dt
-
-    expected_h100_flops = {
-        torch.bfloat16: 1979e12,
-        torch.float32: 67e12,
-    }
-
-    expected_m3_max_flops = {
-        torch.float32: 14.2e12,
-        torch.float16: 28.4e12,
-    }
-
-    expected_flops = {
-        "cuda": expected_h100_flops,
-        "mps": expected_m3_max_flops,
-    }
-
-    device = config.device
-    dtype = config.dtype
-
-    flops_expected = expected_flops[device][dtype]
-
-    mfu = (flops_actual / flops_expected) * 100.0 * 100.0
-
-    print(f"Flops expected: {flops_expected:,}")
-    print(f"Flops actual:   {flops_actual:,}")
-    print(f"MFU:            {mfu}")
-
-    return mfu
 
 def main():
 
