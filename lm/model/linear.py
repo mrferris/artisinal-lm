@@ -1,14 +1,13 @@
 import math
-import torch.nn as nn
+
 import torch
-from jaxtyping import Float, Int
+import torch.nn as nn
 from einops import reduce
+from jaxtyping import Float, Int
 
 
 class Linear(nn.Module):
-    def __init__(
-        self, in_features: int, out_features: int, device: torch.device | None = None, dtype: torch.dtype | None = None
-    ):
+    def __init__(self, in_features: int, out_features: int, device: torch.device | None = None, dtype: torch.dtype | None = None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -28,13 +27,7 @@ class Linear(nn.Module):
 
 
 class Embedding(nn.Module):
-    def __init__(
-        self,
-        num_embeddings: int,
-        embedding_dim: int,
-        device: torch.device | None = None,
-        dtype: torch.dtype | None = None,
-    ):
+    def __init__(self, num_embeddings: int, embedding_dim: int, device: torch.device | None = None, dtype: torch.dtype | None = None):
         super().__init__()
 
         self.num_embeddings = num_embeddings
@@ -53,9 +46,7 @@ class Embedding(nn.Module):
 
 
 class RMSNorm(nn.Module):
-    def __init__(
-        self, d_model: int, eps: float = 1e-5, device: torch.device | None = None, dtype: torch.dtype | None = None
-    ):
+    def __init__(self, d_model: int, eps: float = 1e-5, device: torch.device | None = None, dtype: torch.dtype | None = None):
         super().__init__()
 
         self.d_model = d_model

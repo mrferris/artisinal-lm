@@ -1,6 +1,7 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
 from jaxtyping import Float
+
 from lm.model.linear import Linear
 
 

@@ -42,7 +42,6 @@ python-preference = "managed"
 [tool.uv.sources]
 model = { path = "./model", editable = true }
 
-
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "WARNING"
@@ -51,12 +50,10 @@ addopts = "-s"
 [tool.ruff]
 line-length = 160
 
-[tool.ruff.lint.extend-per-file-ignores]
-# Also ignore `E402` in all `__init__.py` files.
-"__init__.py" = ["E402", "F401", "F403", "E501"]
+[tool.ruff.format]
+skip-magic-trailing-comma = true
 
 [tool.ruff.lint]
+# Enable rules by selecting their prefixes or explicit codes
+select = ["E", "F", "W", "I", "COM812"]
 extend-select = ["UP"]
-ignore = [
-    "F722"
-]

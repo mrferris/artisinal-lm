@@ -1,7 +1,9 @@
-import torch.nn as nn
-import torch
 import math
+
+import torch
+import torch.nn as nn
 from jaxtyping import Float, Int
+
 from lm.model.linear import Linear
 
 
@@ -80,14 +82,7 @@ def debug_tensor(name, t):
 
 
 class MultiHeadSelfAttention(nn.Module):
-    def __init__(
-        self,
-        d_model: int,
-        num_heads: int,
-        rope: Rope | None = None,
-        device: torch.device | None = None,
-        dtype: torch.dtype | None = None,
-    ):
+    def __init__(self, d_model: int, num_heads: int, rope: Rope | None = None, device: torch.device | None = None, dtype: torch.dtype | None = None):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -103,9 +98,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.w_output = Linear(d_model, d_model, device, dtype)
 
     def forward(
-        self,
-        input: Float[torch.Tensor, "... seq_len d_model"],
-        token_positions: Int[torch.Tensor, "... seq_len"] | None = None,
+        self, input: Float[torch.Tensor, "... seq_len d_model"], token_positions: Int[torch.Tensor, "... seq_len"] | None = None
     ) -> Float[torch.Tensor, "... seq_len d_model"]:
         *batch_dims, seq_len, _ = input.shape
 

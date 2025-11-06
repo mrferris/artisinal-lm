@@ -1,9 +1,10 @@
+import torch
 import torch.nn as nn
 from jaxtyping import Float, Int
-import torch
-from lm.model.attention import Rope, MultiHeadSelfAttention
+
+from lm.model.attention import MultiHeadSelfAttention, Rope
 from lm.model.ffn import SwiGLU
-from lm.model.linear import RMSNorm, Embedding, Linear
+from lm.model.linear import Embedding, Linear, RMSNorm
 
 
 class Transformer(nn.Module):
@@ -21,9 +22,7 @@ class Transformer(nn.Module):
         self.attention_prenorm = RMSNorm(d_model=d_model, device=device, dtype=dtype)
         self.ffn_prenorm = RMSNorm(d_model=d_model, device=device, dtype=dtype)
 
-        self.attention = MultiHeadSelfAttention(
-            d_model=self.d_model, num_heads=self.num_heads, rope=rope, device=self.device, dtype=self.dtype
-        )
+        self.attention = MultiHeadSelfAttention(d_model=self.d_model, num_heads=self.num_heads, rope=rope, device=self.device, dtype=self.dtype)
 
         self.ffn = SwiGLU(d_model=self.d_model, d_ff=self.d_ff, device=self.device, dtype=self.dtype)
 
@@ -64,19 +63,14 @@ class TransformerLM(nn.Module):
         self.embedding_layer = Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
 
         self.transformer_layers = nn.ModuleList(
-            [
-                Transformer(d_model=d_model, num_heads=num_heads, d_ff=d_ff, rope=self.rope, device=device, dtype=dtype)
-                for _ in range(num_layers)
-            ]
+            [Transformer(d_model=d_model, num_heads=num_heads, d_ff=d_ff, rope=self.rope, device=device, dtype=dtype) for _ in range(num_layers)]
         )
 
         self.output_norm = RMSNorm(d_model=d_model, device=device, dtype=dtype)
 
         self.output_embedding = Linear(d_model, vocab_size, device, dtype)
 
-    def forward(
-        self, input: Int[torch.Tensor, "batch_size sequence_length"]
-    ) -> Float[torch.Tensor, "batch_size sequence_length vocab_size"]:
+    def forward(self, input: Int[torch.Tensor, "batch_size sequence_length"]) -> Float[torch.Tensor, "batch_size sequence_length vocab_size"]:
         output = self.embedding_layer(input)
 
         batch, seq_len, _ = output.shape

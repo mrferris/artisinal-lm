@@ -1,25 +1,25 @@
 import argparse
-from dataclasses import asdict, dataclass
 import math
 import os
+import time
+from dataclasses import asdict, dataclass
+from datetime import datetime
+
+import numpy
 import torch
 import torch.nn as nn
-from lm.training.loss.cross_entropy import cross_entropy_masked
-from lm.tokenization.bpe import Tokenizer
-from lm.training.utils.checkpointing import save_checkpoint
-from lm.training.utils.data_batching import load_batch, ConversationBatchLoader
-from lm.training.utils.gradient_clipping import clip_gradients
-from lm.training.optimization.adamw import AdamW
-from lm.training.utils.scheduler import learning_rate_scheduler
+from torch.utils.tensorboard import SummaryWriter
 
+import wandb
 from lm.model import transformer
 from lm.performance.utils import estimate_mfu, synchronize_accelerator
-
-from torch.utils.tensorboard import SummaryWriter
-import numpy
-from datetime import datetime
-import wandb
-import time
+from lm.tokenization.bpe import Tokenizer
+from lm.training.loss.cross_entropy import cross_entropy_masked
+from lm.training.optimization.adamw import AdamW
+from lm.training.utils.checkpointing import save_checkpoint
+from lm.training.utils.data_batching import ConversationBatchLoader, load_batch
+from lm.training.utils.gradient_clipping import clip_gradients
+from lm.training.utils.scheduler import learning_rate_scheduler
 
 
 @dataclass
@@ -181,7 +181,12 @@ class Checkpointer:
         self.start_time = datetime.now().strftime("%-m-%-d-%y_%H:%M")
         os.makedirs(os.path.join("checkpoints", self.start_time), exist_ok=True)
 
-    def save_checkpoint(self, model, optimizer, iteration):
+    def save_checkpoint(
+        self,
+        model,
+        optimizer,
+        iteration,
+    ):
         save_checkpoint(
             model=model,
             optimizer=optimizer,
@@ -191,7 +196,13 @@ class Checkpointer:
 
 
 class BatchLoader:
-    def __init__(self, file_path: str, batch_size: int, context_length: int, device: torch.device):
+    def __init__(
+        self,
+        file_path: str,
+        batch_size: int,
+        context_length: int,
+        device: torch.device,
+    ):
         self.file = numpy.memmap(file_path, dtype=numpy.uint16, mode="r")
         self.batch_size = batch_size
         self.context_length = context_length

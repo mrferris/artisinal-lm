@@ -26,20 +26,11 @@ def estimate_mfu(num_params: int, model: torch.nn.Module, dt: float) -> float:
     flops_actual *= model.batch_size
     flops_actual = flops_actual / dt
 
-    expected_h100_flops = {
-        torch.bfloat16: 1979e12,
-        torch.float32: 67e12,
-    }
+    expected_h100_flops = {torch.bfloat16: 1979e12, torch.float32: 67e12}
 
-    expected_m3_max_flops = {
-        torch.float32: 14.2e12,
-        torch.float16: 28.4e12,
-    }
+    expected_m3_max_flops = {torch.float32: 14.2e12, torch.float16: 28.4e12}
 
-    expected_flops = {
-        "cuda": expected_h100_flops,
-        "mps": expected_m3_max_flops,
-    }
+    expected_flops = {"cuda": expected_h100_flops, "mps": expected_m3_max_flops}
 
     device = model.device
     dtype = model.dtype

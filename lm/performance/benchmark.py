@@ -1,11 +1,13 @@
 import argparse
+import statistics
+import timeit
 from dataclasses import dataclass
+
+import torch
+
+from lm.model.transformer import TransformerLM
 from lm.performance.utils import synchronize_accelerator
 from lm.training.loss.cross_entropy import cross_entropy
-from lm.model.transformer import TransformerLM
-import timeit
-import statistics
-import torch
 
 
 @dataclass
@@ -42,7 +44,7 @@ def benchmark(config: BenchmarkConfig):
     print(
         f"  d_model={config.d_model}, vocab_size={config.vocab_size}, context_length={config.context_length}\n"
         f"  num_layers={config.num_layers}, num_heads={config.num_heads}, d_ff={config.d_ff}, rope_theta={config.rope_theta}\n"
-        f"  device={config.device}, compile={config.compile}, batch_size={config.batch_size},"
+        f"  device={config.device}, compile={config.compile}, batch_size={config.batch_size}"
     )
     model = TransformerLM(
         d_model=config.d_model,
@@ -70,6 +72,7 @@ def benchmark(config: BenchmarkConfig):
 
     # Benchmarking
     times = timeit.repeat(lambda: model_step(model, input, desired_output, config.forward_only), number=1, repeat=config.benchmark_steps)
+
     mean = statistics.mean(times)
     stdev = statistics.stdev(times)
 
@@ -101,7 +104,7 @@ if __name__ == "__main__":
     arguments.add_argument("--benchmark-steps", type=int, default=10, help="Number of steps to benchmark")
     arguments.add_argument("--forward-only", type=bool, default=False, help="Benchmark forward passes only")
     arguments.add_argument("--device", type=str, default="cuda", help="Device on which to run benchmarks")
-    arguments.add_argument("--compile", type=bool, default="True", help="Whether to torch.compile the model")
+    arguments.add_argument("--compile", type=bool, default=True, help="Whether to torch.compile the model")
     args = arguments.parse_args()
 
     config = BenchmarkConfig(

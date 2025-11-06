@@ -1,14 +1,15 @@
-from jaxtyping import Float, Int
 import torch
 import torch.nn.functional as F
+from jaxtyping import Float, Int
 
-def cross_entropy(logits: Float[torch.Tensor, "batch_size vocab_size"], targets: Int[torch.Tensor, "batch_size"]) -> Float[torch.Tensor, ""]: 
+
+def cross_entropy(logits: Float[torch.Tensor, "batch_size vocab_size"], targets: Int[torch.Tensor, "batch_size"]) -> Float[torch.Tensor, ""]:
     """
     loss = -log (exp (o) / sum exp (a))
     loss = -log (exp(o)) + log (sum(exp(a)))
     loss = logsumexp(o) - o
     """
-    
+
     logsumexp = torch.logsumexp(input=logits, dim=-1, keepdim=True)
 
     target_logit = logits.gather(dim=-1, index=targets.unsqueeze(-1))
@@ -16,6 +17,7 @@ def cross_entropy(logits: Float[torch.Tensor, "batch_size vocab_size"], targets:
     loss = logsumexp - target_logit
 
     return loss.mean()
+
 
 def cross_entropy_masked(
     logits: torch.Tensor,
