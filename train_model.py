@@ -4,7 +4,7 @@ import math
 import os
 import torch
 import torch.nn as nn
-from lm.training.loss.cross_entropy import cross_entropy, cross_entropy_masked
+from lm.training.loss.cross_entropy import cross_entropy_masked
 from lm.tokenization.bpe import Tokenizer
 from lm.training.utils.checkpointing import save_checkpoint
 from lm.training.utils.data_batching import load_batch, ConversationBatchLoader
@@ -21,12 +21,12 @@ from datetime import datetime
 import wandb
 import time
 
+
 @dataclass
 class TrainingConfig:
-
     batch_size: int
     context_length: int
-    d_model: int                
+    d_model: int
     vocab_size: int
     num_heads: int
     num_layers: int
@@ -40,7 +40,7 @@ class TrainingConfig:
     training_steps: int
     warmup_steps: int
     gradient_limit: float
-    
+
     checkpoint_interval: int
     validation_interval: int
 
@@ -50,10 +50,9 @@ class TrainingConfig:
     device: str
     dtype: torch.dtype
     compile: bool
-    
+
 
 def train(config: TrainingConfig):
-
     model = transformer.TransformerLM(
         d_model=config.d_model,
         vocab_size=config.vocab_size,
@@ -76,7 +75,7 @@ def train(config: TrainingConfig):
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
         betas=config.betas,
-        eps=config.eps
+        eps=config.eps,
     )
 
     training_data_loader = ConversationBatchLoader(
@@ -90,32 +89,28 @@ def train(config: TrainingConfig):
         file_path=config.validation_data_path,
         batch_size=config.batch_size,
         context_length=config.context_length,
-        device=config.device
+        device=config.device,
     )
 
     param_counts = model.param_count()
     config_dict = asdict(config)
     config_dict["num_params"] = param_counts[0]
     config_dict["non_embedding_params"] = param_counts[1]
-    wandb_handler = wandb.init(entity="michael-ferris-1928-michael-ferris",
-                               project="LLM",
-                               config=config_dict)
+    wandb_handler = wandb.init(entity="michael-ferris-1928-michael-ferris", project="LLM", config=config_dict)
 
     current_time = datetime.now().strftime("%-m-%-d-%y_%H:%M")
     tensorboard_writer = SummaryWriter(f"runs/experiment-{current_time}")
     checkpointer = Checkpointer()
 
-    tokenizer = Tokenizer.from_files(vocab_filepath='data/vocab/imessages_vocab.json',
-                                     merges_filepath='data/vocab/imessages_merges.pkl')
-    
+    tokenizer = Tokenizer.from_files(vocab_filepath="data/vocab/imessages_vocab.json", merges_filepath="data/vocab/imessages_merges.pkl")
+
     mfu_steps = 100
 
     synchronize_accelerator(config.device)
     t0 = time.time()
     mfu = 0.0
 
-    for step in range(1, config.training_steps+1):
-
+    for step in range(1, config.training_steps + 1):
         print(f"Step: {step}")
         # Put the model in training mode.
         model.train()
@@ -133,7 +128,7 @@ def train(config: TrainingConfig):
         print(f"Learning rate: {lr}")
 
         # Get a batch of data using the data loader
- 
+
         train, label, lengths = training_data_loader.load_batch()
         output = model(train)
         loss = cross_entropy_masked(output, label, train, lengths, me_token_id=1, them_token_id=2)
@@ -159,68 +154,54 @@ def train(config: TrainingConfig):
             dt = t1 - t0
             t0 = t1
 
-            mfu = estimate_mfu(
-                num_params=param_counts[1], 
-                model=model,
-                dt=dt
-            )
+            mfu = estimate_mfu(num_params=param_counts[1], model=model, dt=dt)
 
         tensorboard_writer.add_scalar("Loss-2/train", loss.item(), step)
 
         perplexity = math.exp(loss.item())
-        wandb_handler.log({'loss': loss.item(), 'perplexity': perplexity, 'mfu': mfu}, step=step)
+        wandb_handler.log({"loss": loss.item(), "perplexity": perplexity, "mfu": mfu}, step=step)
         if step % config.checkpoint_interval == 0:
             checkpointer.save_checkpoint(model, optimizer, step)
-        if step % config.validation_interval == 0: 
+        if step % config.validation_interval == 0:
             model.eval()
             with torch.no_grad():
-                 validation_loss = calculate_validation_loss(
-                     model=model,
-                     loader=validation_batch_loader,
-                 )
-                 print(f"Validation loss: {validation_loss}")
-                 tensorboard_writer.add_scalar("Loss-2/valid", validation_loss.item(), step)
-                 wandb_handler.log({'val_loss': validation_loss.item()}, step=step)
+                validation_loss = calculate_validation_loss(
+                    model=model,
+                    loader=validation_batch_loader,
+                )
+                print(f"Validation loss: {validation_loss}")
+                tensorboard_writer.add_scalar("Loss-2/valid", validation_loss.item(), step)
+                wandb_handler.log({"val_loss": validation_loss.item()}, step=step)
 
     return
 
 
-class Checkpointer():
-
+class Checkpointer:
     def __init__(self):
-
         self.start_time = datetime.now().strftime("%-m-%-d-%y_%H:%M")
         os.makedirs(os.path.join("checkpoints", self.start_time), exist_ok=True)
 
     def save_checkpoint(self, model, optimizer, iteration):
-
         save_checkpoint(
             model=model,
             optimizer=optimizer,
             iteration=iteration,
-            out=os.path.join("checkpoints", self.start_time, f"checkpoint_step_{iteration}")
+            out=os.path.join("checkpoints", self.start_time, f"checkpoint_step_{iteration}"),
         )
 
+
 class BatchLoader:
-
     def __init__(self, file_path: str, batch_size: int, context_length: int, device: torch.device):
-
-        self.file = numpy.memmap(file_path, dtype=numpy.uint16, mode='r')
+        self.file = numpy.memmap(file_path, dtype=numpy.uint16, mode="r")
         self.batch_size = batch_size
         self.context_length = context_length
         self.device = device
 
     def load_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return load_batch(self.file, batch_size=self.batch_size, context_length=self.context_length, device=self.device)
 
-        return load_batch(
-            self.file,
-            batch_size=self.batch_size,
-            context_length=self.context_length,
-            device=self.device
-        )
 
 def calculate_validation_loss(model: nn.Module, loader: BatchLoader) -> float:
-
     validation_data, validation_label, lengths = loader.load_batch()
     validation_output = model(validation_data)
 
@@ -230,7 +211,6 @@ def calculate_validation_loss(model: nn.Module, loader: BatchLoader) -> float:
 
 
 def main():
-
     arguments = argparse.ArgumentParser(description="Train LLM")
     arguments.add_argument("--batch-size", type=int, default=128, help="Number of batches per training step")
     arguments.add_argument("--context-length", type=int, default=256, help="length of model's context length")
@@ -247,8 +227,8 @@ def main():
     arguments.add_argument("--beta2", type=float, default=0.95, help="Beta2 constant for AdamW Optimization")
     arguments.add_argument("--epsilon", type=float, default=1e-5, help="Epsilon cosntant for AdamW Optimization")
     arguments.add_argument("--training-steps", type=int, default=10_000, help="Number of training iterations to run")
-    arguments.add_argument("--warmup-steps", type=int, default=100, help="Number of steps to ramp up to nominal learning rate")
-    arguments.add_argument("--gradient-limit", type=int, default=1.0, help="L2 norm of gradients above which clipping will occur")
+    arguments.add_argument("--warmup-steps", type=int, default=100, help="Steps before specified learning rate reached")
+    arguments.add_argument("--gradient-limit", type=int, default=1.0, help="L2 gabove which will be clipped")
     arguments.add_argument("--training-data-path", type=str, required=True, help="Path to training data (.npy)")
     arguments.add_argument("--validation-data-path", type=str, required=False, help="Path to validation data (.npy)")
     arguments.add_argument("--checkpoint-interval", type=int, default=500, help="Save checkpoint every n training steps")
@@ -284,11 +264,12 @@ def main():
         finetuning_data_path=args.finetuning_data_path,
         device=args.device,
         dtype=args.dtype,
-        compile=args.compile
+        compile=args.compile,
     )
 
     print(f"Training with config: {config}")
     train(config=config)
+
 
 if __name__ == "__main__":
     main()

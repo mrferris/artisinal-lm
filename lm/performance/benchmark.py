@@ -7,11 +7,13 @@ import timeit
 import statistics
 import torch
 
+
 @dataclass
 class BenchmarkConfig:
     """
     Configures benchmarking and the model parameters to be benchmarked.
     """
+
     warmup_steps: int
     benchmark_steps: int
     forward_only: bool
@@ -27,12 +29,13 @@ class BenchmarkConfig:
     device: torch.device
     compile: bool
 
+
 def benchmark(config: BenchmarkConfig):
     """
     Runs warmup steps and then times model forward (and optionally backward) passes
     on random data.
     """
-    print("============================================")
+    print("=======================================================")
     print("Running benchmarks: ")
     print(f"warmup_steps={config.warmup_steps}, benchmark_steps={config.benchmark_steps}, forward_only={config.forward_only}")
     print("Model hyperparameters:")
@@ -49,18 +52,18 @@ def benchmark(config: BenchmarkConfig):
         num_heads=config.num_heads,
         d_ff=config.d_ff,
         rope_theta=config.rope_theta,
-        device=config.device
+        device=config.device,
     )
     print(f"Non-embedding param count: {model.param_count()[1]:,}")
-    print("============================================")
+    print("=======================================================")
 
-    input = torch.randint(low=0, high=config.vocab_size-1, size=(config.batch_size, config.context_length))
-    desired_output = torch.randint(low=0, high=config.vocab_size-1, size=(config.batch_size, config.context_length))
+    input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
+    desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
 
     model.to(config.device)
     input.to(config.device)
     desired_output.to(config.device)
-    
+
     # Warmup steps
     for _ in range(config.warmup_steps):
         model_step(model, input, desired_output, config.forward_only)
@@ -74,8 +77,8 @@ def benchmark(config: BenchmarkConfig):
     print(f"Mean: {mean} seconds")
     print(f"Std dev: {stdev} seconds")
 
-def model_step(model, input, desired_output, forward_only):
 
+def model_step(model, input, desired_output, forward_only):
     output = model(input)
     if forward_only:
         loss = cross_entropy(output, desired_output)
@@ -83,8 +86,8 @@ def model_step(model, input, desired_output, forward_only):
 
     synchronize_accelerator(config.device)
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     arguments = argparse.ArgumentParser(description="Benchmark LLM")
     arguments.add_argument("--batch-size", type=int, default=4, help="Number of batches per training step")
     arguments.add_argument("--context-length", type=int, default=256, help="length of model's context length")
@@ -94,9 +97,9 @@ if __name__ == "__main__":
     arguments.add_argument("--num-layers", type=int, default=4, help="Number of transformer layers in the model")
     arguments.add_argument("--d-ff", type=int, default=1344, help="Dimension of the feedforward networks in the model")
     arguments.add_argument("--rope-theta", type=int, default=10_000, help="Constant used in RoPE rotation calculations")
-    arguments.add_argument("--warmup-steps", type=int, default=5, help="Number of steps before beginning benchamrk measurements")
+    arguments.add_argument("--warmup-steps", type=int, default=5, help="Steps before beginning benchamrk measurements")
     arguments.add_argument("--benchmark-steps", type=int, default=10, help="Number of steps to benchmark")
-    arguments.add_argument("--forward-only", type=bool, default=False, help="Run benchmarking on forward passes only, not backward")
+    arguments.add_argument("--forward-only", type=bool, default=False, help="Benchmark forward passes only")
     arguments.add_argument("--device", type=str, default="cuda", help="Device on which to run benchmarks")
     arguments.add_argument("--compile", type=bool, default="True", help="Whether to torch.compile the model")
     args = arguments.parse_args()
@@ -114,7 +117,7 @@ if __name__ == "__main__":
         d_ff=args.d_ff,
         rope_theta=args.rope_theta,
         device=args.device,
-        compile=args.compile
+        compile=args.compile,
     )
 
     benchmark(config=config)
