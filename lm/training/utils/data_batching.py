@@ -1,14 +1,16 @@
-import torch
-from numpy.typing import NDArray
 import numpy as np
 import numpy.random as random
+import torch
 from jaxtyping import Int
+from numpy.typing import NDArray
+
+
 def load_batch(
-        tokens: NDArray,
-        batch_size: int,
-        context_length: int,
-        device="cpu"
-    ) -> tuple[Int[torch.Tensor, "batch_size context_length"]]:
+    tokens: NDArray,
+    batch_size: int,
+    context_length: int,
+    device="cpu",
+) -> tuple[Int[torch.Tensor, "batch_size context_length"]]:
     """
     Load data from sequential token integers into to tensors ready for model input.
     Args:
@@ -31,9 +33,9 @@ def load_batch(
     random_indices = random.randint(0, max_index + 1, size=batch_size)
 
     # Sample and populate tensors
-    for (sample_number, sample_index) in enumerate(random_indices):
-        sequence = torch.from_numpy(tokens[sample_index: sample_index + context_length].copy()).to(device, dtype=torch.long)
-        label = torch.from_numpy(tokens[sample_index + 1: sample_index + context_length + 1].copy()).to(device, dtype=torch.long)
+    for sample_number, sample_index in enumerate(random_indices):
+        sequence = torch.from_numpy(tokens[sample_index : sample_index + context_length].copy()).to(device, dtype=torch.long)
+        label = torch.from_numpy(tokens[sample_index + 1 : sample_index + context_length + 1].copy()).to(device, dtype=torch.long)
 
         sequences[sample_number] = sequence
         labels[sample_number] = label
@@ -41,13 +43,9 @@ def load_batch(
     return (sequences, labels)
 
 
-import numpy as np
-import torch
-from typing import Tuple, List
-
 class ConversationBatchLoader:
     def __init__(self, file_path: str, batch_size: int, context_length: int, device: torch.device):
-        self.tokens = np.memmap(file_path, dtype=np.uint16, mode='r')
+        self.tokens = np.memmap(file_path, dtype=np.uint16, mode="r")
         self.batch_size = batch_size
         self.context_length = context_length
         self.device = device
@@ -60,7 +58,7 @@ class ConversationBatchLoader:
         # Precompute message boundaries for speed
         self.boundaries = self._compute_boundaries()
 
-    def _compute_boundaries(self) -> List[Tuple[int, int]]:
+    def _compute_boundaries(self) -> list[tuple[int, int]]:
         """
         Precompute (start, end) indices of all <|Me|> and <|Them|> segments,
         skipping <|endoftext|> boundaries.
@@ -82,7 +80,7 @@ class ConversationBatchLoader:
                 i += 1
         return boundaries
 
-    def load_batch(self) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:
+    def load_batch(self) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
         """
         Load a batch of message-aligned samples.
         Each sequence contains as many *full messages* as will fit

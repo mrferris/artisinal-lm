@@ -50,8 +50,7 @@ addopts = "-s"
 [tool.ruff]
 line-length = 160
 
-[tool.ruff.format]
-skip-magic-trailing-comma = true
+
 
 [tool.ruff.lint]
 # Enable rules by selecting their prefixes or explicit codes
