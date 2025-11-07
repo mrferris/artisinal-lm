@@ -43,9 +43,9 @@ def benchmark(config: BenchmarkConfig):
     print("Model hyperparameters:")
     print(
         f"  d_model={config.d_model}, vocab_size={config.vocab_size}, context_length={config.context_length}\n"
-        f"  num_layers={config.num_layers}, num_heads={config.num_heads}, d_ff={config.d_ff}, rope_theta={config.rope_theta}\n"
-        f"  device={config.device}, compile={config.compile}, batch_size={config.batch_size}"
+        f"  num_layers={config.num_layers}, num_heads={config.num_heads}, d_ff={config.d_ff}, rope_theta={config.rope_theta}\n",
     )
+    print(f"device={config.device}, compile={config.compile}, batch_size={config.batch_size}")
     model = TransformerLM(
         d_model=config.d_model,
         vocab_size=config.vocab_size,
@@ -56,15 +56,16 @@ def benchmark(config: BenchmarkConfig):
         rope_theta=config.rope_theta,
         device=config.device,
     )
-    print(f"Non-embedding param count: {model.param_count()[1]:,}")
+    param_count = model.param_count()[1]
+    print(f"Non-embedding param count: {param_count:,}")
     print("=======================================================")
 
     input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
     desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
 
     model.to(config.device)
-    input.to(config.device)
-    desired_output.to(config.device)
+    input = input.to(config.device)
+    desired_output = desired_output.to(config.device)
 
     # Warmup steps
     for _ in range(config.warmup_steps):
@@ -83,7 +84,8 @@ def benchmark(config: BenchmarkConfig):
 
 def model_step(model, input, desired_output, forward_only):
     output = model(input)
-    if forward_only:
+    if not forward_only:
+        output = output.to(config.device)
         loss = cross_entropy(output, desired_output)
         loss.backward()
 
@@ -91,21 +93,22 @@ def model_step(model, input, desired_output, forward_only):
 
 
 if __name__ == "__main__":
-    arguments = argparse.ArgumentParser(description="Benchmark LLM")
-    arguments.add_argument("--batch-size", type=int, default=4, help="Number of batches per training step")
-    arguments.add_argument("--context-length", type=int, default=256, help="length of model's context length")
-    arguments.add_argument("--d-model", type=int, default=512, help="Dimension of model's embeddings")
-    arguments.add_argument("--vocab-size", type=int, default=10_000, help="Number of tokens in the model's vocab")
-    arguments.add_argument("--num-heads", type=int, default=16, help="Heads per attention mechanism in the model")
-    arguments.add_argument("--num-layers", type=int, default=4, help="Number of transformer layers in the model")
-    arguments.add_argument("--d-ff", type=int, default=1344, help="Dimension of the feedforward networks in the model")
-    arguments.add_argument("--rope-theta", type=int, default=10_000, help="Constant used in RoPE rotation calculations")
-    arguments.add_argument("--warmup-steps", type=int, default=5, help="Steps before beginning benchamrk measurements")
-    arguments.add_argument("--benchmark-steps", type=int, default=10, help="Number of steps to benchmark")
-    arguments.add_argument("--forward-only", type=bool, default=False, help="Benchmark forward passes only")
-    arguments.add_argument("--device", type=str, default="cuda", help="Device on which to run benchmarks")
-    arguments.add_argument("--compile", type=bool, default=True, help="Whether to torch.compile the model")
-    args = arguments.parse_args()
+    parser = argparse.ArgumentParser(description="Benchmark LLM")
+    parser.add_argument("--batch-size", type=int, default=4, help="Number of batches per training step")
+    parser.add_argument("--context-length", type=int, default=256, help="length of model's context length")
+    parser.add_argument("--d-model", type=int, default=512, help="Dimension of model's embeddings")
+    parser.add_argument("--vocab-size", type=int, default=10_000, help="Number of tokens in the model's vocab")
+    parser.add_argument("--num-heads", type=int, default=16, help="Heads per attention mechanism in the model")
+    parser.add_argument("--num-layers", type=int, default=4, help="Number of transformer layers in the model")
+    parser.add_argument("--d-ff", type=int, default=1344, help="Dimension of the feedforward networks in the model")
+    parser.add_argument("--rope-theta", type=int, default=10_000, help="Constant used in RoPE rotation calculations")
+    parser.add_argument("--warmup-steps", type=int, default=5, help="Steps before beginning benchamrk measurements")
+    parser.add_argument("--benchmark-steps", type=int, default=10, help="Number of steps to benchmark")
+    parser.add_argument("--forward-only", dest="forward_only", action="store_true", help="Benchmark forward passes only")
+    parser.add_argument("--device", type=str, default="cuda", help="Device on which to run benchmarks")
+    parser.add_argument("--no-compile", dest="compile", action="store_false", help="Disable torch.compile")
+    parser.set_defaults(compile=True, forward_only=False)
+    args = parser.parse_args()
 
     config = BenchmarkConfig(
         warmup_steps=args.warmup_steps,
