@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import torch
 
 from lm.model.transformer import TransformerLM
+from reference.model import BasicsTransformerLM as ReferenceTransformerLM
 from lm.performance.utils import synchronize_accelerator
 from lm.training.loss.cross_entropy import cross_entropy
 
@@ -30,6 +31,7 @@ class BenchmarkConfig:
     rope_theta: int
     device: torch.device
     compile: bool
+    reference: bool
 
 
 def benchmark(config: BenchmarkConfig):
@@ -46,20 +48,30 @@ def benchmark(config: BenchmarkConfig):
         f"  num_layers={config.num_layers}, num_heads={config.num_heads}, d_ff={config.d_ff}, rope_theta={config.rope_theta}\n",
     )
     print(f"device={config.device}, compile={config.compile}, batch_size={config.batch_size}")
-    model = TransformerLM(
-        d_model=config.d_model,
-        vocab_size=config.vocab_size,
-        context_length=config.context_length,
-        num_layers=config.num_layers,
-        num_heads=config.num_heads,
-        d_ff=config.d_ff,
-        rope_theta=config.rope_theta,
-        device=config.device,
-    )
+    if config.reference:
+        model = ReferenceTransformerLM(
+            d_model=config.d_model,
+            vocab_size=config.vocab_size,
+            context_length=config.context_length,
+            num_layers=config.num_layers,
+            num_heads=config.num_heads,
+            d_ff=config.d_ff,
+            rope_theta=config.rope_theta,
+        )
+    else:
+        model = TransformerLM(
+            d_model=config.d_model,
+            vocab_size=config.vocab_size,
+            context_length=config.context_length,
+            num_layers=config.num_layers,
+            num_heads=config.num_heads,
+            d_ff=config.d_ff,
+            rope_theta=config.rope_theta,
+            device=config.device,
+        )
     param_count = model.param_count()[1]
     print(f"Non-embedding param count: {param_count:,}")
-    print("=======================================================")
-
+    
     input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
     desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
 
@@ -81,6 +93,7 @@ def benchmark(config: BenchmarkConfig):
     print(f"Mean: {mean} seconds")
     print(f"Std dev: {stdev} seconds")
 
+    print("=======================================================")
 
 def model_step(model, input, desired_output, forward_only):
     output = model(input)
@@ -107,7 +120,8 @@ if __name__ == "__main__":
     parser.add_argument("--forward-only", dest="forward_only", action="store_true", help="Benchmark forward passes only")
     parser.add_argument("--device", type=str, default="cuda", help="Device on which to run benchmarks")
     parser.add_argument("--no-compile", dest="compile", action="store_false", help="Disable torch.compile")
-    parser.set_defaults(compile=True, forward_only=False)
+    parser.add_argument("--reference", dest="reference", action="store_true", help="Run reference model instead of artisinal")
+    parser.set_defaults(compile=True, forward_only=False, reference=False)
     args = parser.parse_args()
 
     config = BenchmarkConfig(
@@ -124,6 +138,7 @@ if __name__ == "__main__":
         rope_theta=args.rope_theta,
         device=args.device,
         compile=args.compile,
+        reference=args.reference
     )
 
     benchmark(config=config)
