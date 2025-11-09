@@ -9,6 +9,7 @@ from lm.model.transformer import TransformerLM
 from reference.model import BasicsTransformerLM as ReferenceTransformerLM
 from lm.performance.utils import synchronize_accelerator
 from lm.training.loss.cross_entropy import cross_entropy
+from lm.training.optimization.adamw import AdamW
 
 
 @dataclass
@@ -32,6 +33,7 @@ class BenchmarkConfig:
     device: torch.device
     compile: bool
     reference: bool
+    optimization: bool
 
 
 def benchmark(config: BenchmarkConfig):
@@ -71,6 +73,17 @@ def benchmark(config: BenchmarkConfig):
         )
     param_count = model.param_count()[1]
     print(f"Non-embedding param count: {param_count:,}")
+
+    if config.optimization:
+        optimizer = AdamW(
+            params=model.parameters(),
+            lr=1e-3,
+            weight_decay=0.01,
+            betas=[0.9, 0.95],
+            eps=1e-5,
+        )
+    else:
+        optimizer = None
     
     input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
     desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
@@ -81,10 +94,10 @@ def benchmark(config: BenchmarkConfig):
 
     # Warmup steps
     for _ in range(config.warmup_steps):
-        model_step(model, input, desired_output, config.forward_only)
+        model_step(model, input, desired_output, config.forward_only, optimizer)
 
     # Benchmarking
-    times = timeit.repeat(lambda: model_step(model, input, desired_output, config.forward_only), number=1, repeat=config.benchmark_steps)
+    times = timeit.repeat(lambda: model_step(model, input, desired_output, config.forward_only, optimizer), number=1, repeat=config.benchmark_steps)
 
     mean = statistics.mean(times)
     stdev = statistics.stdev(times)
@@ -95,12 +108,14 @@ def benchmark(config: BenchmarkConfig):
 
     print("=======================================================")
 
-def model_step(model, input, desired_output, forward_only):
+def model_step(model, input, desired_output, forward_only, optimizer):
     output = model(input)
     if not forward_only:
         output = output.to(config.device)
         loss = cross_entropy(output, desired_output)
         loss.backward()
+        if optimizer is not None:
+            optimizer.step()
 
     synchronize_accelerator(config.device)
 
@@ -121,7 +136,8 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda", help="Device on which to run benchmarks")
     parser.add_argument("--no-compile", dest="compile", action="store_false", help="Disable torch.compile")
     parser.add_argument("--reference", dest="reference", action="store_true", help="Run reference model instead of artisinal")
-    parser.set_defaults(compile=True, forward_only=False, reference=False)
+    parser.add_argument("--optimization", dest="optimization", action="store_true", help="Benchmark optimization step")
+    parser.set_defaults(compile=True, forward_only=False, reference=False, optimization=False)
     args = parser.parse_args()
 
     config = BenchmarkConfig(
@@ -138,7 +154,8 @@ if __name__ == "__main__":
         rope_theta=args.rope_theta,
         device=args.device,
         compile=args.compile,
-        reference=args.reference
-    )
+        reference=args.reference,
+        optimization=args.optimization,
+z    )
 
     benchmark(config=config)
