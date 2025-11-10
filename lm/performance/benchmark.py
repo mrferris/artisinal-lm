@@ -41,6 +41,7 @@ def benchmark(config: BenchmarkConfig):
     Runs warmup steps and then times model forward (and optionally backward) passes
     on random data.
     """
+    begin_memory_profiling(config)
     print("=======================================================")
     print("Running benchmarks: ")
     print(f"warmup_steps={config.warmup_steps}, benchmark_steps={config.benchmark_steps}, forward_only={config.forward_only}")
@@ -84,7 +85,7 @@ def benchmark(config: BenchmarkConfig):
         )
     else:
         optimizer = None
-    
+
     input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
     desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
 
@@ -99,6 +100,8 @@ def benchmark(config: BenchmarkConfig):
     # Benchmarking
     times = timeit.repeat(lambda: model_step(model, input, desired_output, config.forward_only, optimizer), number=1, repeat=config.benchmark_steps)
 
+    end_memory_profiling(config)
+
     mean = statistics.mean(times)
     stdev = statistics.stdev(times)
 
@@ -109,15 +112,32 @@ def benchmark(config: BenchmarkConfig):
     print("=======================================================")
 
 def model_step(model, input, desired_output, forward_only, optimizer):
-    output = model(input)
-    if not forward_only:
-        output = output.to(config.device)
+
+    if forward_only:
+        with torch.no_grad():
+            output = model(input)
+    else:
+        output = model(input)
         loss = cross_entropy(output, desired_output)
         loss.backward()
         if optimizer is not None:
             optimizer.step()
 
     synchronize_accelerator(config.device)
+
+def begin_memory_profiling(config):
+
+    if config.device == "cuda":
+        torch.cuda.memory._record_memory_history(
+            stacks="all",
+            max_entries=1000000,
+        )
+
+def end_memory_profiling(config):
+
+    if config.device == "cuda":
+        torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+        torch.cuda.memory._record_memory_history(enabled=None)
 
 
 if __name__ == "__main__":
@@ -156,6 +176,6 @@ if __name__ == "__main__":
         compile=args.compile,
         reference=args.reference,
         optimization=args.optimization,
-z    )
+    )
 
     benchmark(config=config)
