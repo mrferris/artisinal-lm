@@ -2,6 +2,7 @@ import argparse
 import statistics
 import timeit
 from dataclasses import dataclass
+from contextlib import nullcontext
 
 import torch
 
@@ -34,6 +35,7 @@ class BenchmarkConfig:
     compile: bool
     reference: bool
     optimization: bool
+    autocast: bool
 
 
 def benchmark(config: BenchmarkConfig):
@@ -51,27 +53,29 @@ def benchmark(config: BenchmarkConfig):
         f"  num_layers={config.num_layers}, num_heads={config.num_heads}, d_ff={config.d_ff}, rope_theta={config.rope_theta}\n",
     )
     print(f"device={config.device}, compile={config.compile}, batch_size={config.batch_size}")
-    if config.reference:
-        model = ReferenceTransformerLM(
-            d_model=config.d_model,
-            vocab_size=config.vocab_size,
-            context_length=config.context_length,
-            num_layers=config.num_layers,
-            num_heads=config.num_heads,
-            d_ff=config.d_ff,
-            rope_theta=config.rope_theta,
-        )
-    else:
-        model = TransformerLM(
-            d_model=config.d_model,
-            vocab_size=config.vocab_size,
-            context_length=config.context_length,
-            num_layers=config.num_layers,
-            num_heads=config.num_heads,
-            d_ff=config.d_ff,
-            rope_theta=config.rope_theta,
-            device=config.device,
-        )
+
+    with optionally_autocast(config.autocast):
+        if config.reference:
+            model = ReferenceTransformerLM(
+                d_model=config.d_model,
+                vocab_size=config.vocab_size,
+                context_length=config.context_length,
+                num_layers=config.num_layers,
+                num_heads=config.num_heads,
+                d_ff=config.d_ff,
+                rope_theta=config.rope_theta,
+            )
+        else:
+            model = TransformerLM(
+                d_model=config.d_model,
+                vocab_size=config.vocab_size,
+                context_length=config.context_length,
+                num_layers=config.num_layers,
+                num_heads=config.num_heads,
+                d_ff=config.d_ff,
+                rope_theta=config.rope_theta,
+                device=config.device,
+            )
     param_count = model.param_count()[1]
     print(f"Non-embedding param count: {param_count:,}")
 
@@ -139,6 +143,13 @@ def end_memory_profiling(config):
         torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
         torch.cuda.memory._record_memory_history(enabled=None)
 
+def optionally_autocast(autocast: bool):
+    print(f"Autocast: {autocast}")
+    return (
+        torch.autocast("cuda", dtype=torch.float16)
+        if autocast
+        else nullcontext()
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark LLM")
@@ -157,7 +168,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-compile", dest="compile", action="store_false", help="Disable torch.compile")
     parser.add_argument("--reference", dest="reference", action="store_true", help="Run reference model instead of artisinal")
     parser.add_argument("--optimization", dest="optimization", action="store_true", help="Benchmark optimization step")
-    parser.set_defaults(compile=True, forward_only=False, reference=False, optimization=False)
+    parser.add_argument("--autocast", dest="autocast", action="store_true", help="Autocast model to FP16")
+    parser.set_defaults(compile=True, forward_only=False, reference=False, optimization=False, autocast=False)
     args = parser.parse_args()
 
     config = BenchmarkConfig(
@@ -176,6 +188,7 @@ if __name__ == "__main__":
         compile=args.compile,
         reference=args.reference,
         optimization=args.optimization,
+        autocast=args.autocast,
     )
 
     benchmark(config=config)
