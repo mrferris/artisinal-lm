@@ -1,13 +1,13 @@
 import argparse
 import statistics
 import timeit
-from dataclasses import dataclass
 from contextlib import nullcontext
+from dataclasses import dataclass
 
 import torch
+from reference.model import BasicsTransformerLM as ReferenceTransformerLM
 
 from lm.model.transformer import TransformerLM
-from reference.model import BasicsTransformerLM as ReferenceTransformerLM
 from lm.performance.utils import synchronize_accelerator
 from lm.training.loss.cross_entropy import cross_entropy
 from lm.training.optimization.adamw import AdamW
@@ -90,6 +90,11 @@ def benchmark(config: BenchmarkConfig):
     else:
         optimizer = None
 
+    if config.forward_only:
+        model.eval()
+    else:
+        model.train()
+
     input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
     desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
 
@@ -115,8 +120,8 @@ def benchmark(config: BenchmarkConfig):
 
     print("=======================================================")
 
-def model_step(model, input, desired_output, forward_only, optimizer):
 
+def model_step(model, input, desired_output, forward_only, optimizer):
     if forward_only:
         with torch.no_grad():
             output = model(input)
@@ -129,27 +134,24 @@ def model_step(model, input, desired_output, forward_only, optimizer):
 
     synchronize_accelerator(config.device)
 
-def begin_memory_profiling(config):
 
+def begin_memory_profiling(config):
     if config.device == "cuda":
         torch.cuda.memory._record_memory_history(
             stacks="all",
             max_entries=1000000,
         )
 
-def end_memory_profiling(config):
 
+def end_memory_profiling(config):
     if config.device == "cuda":
         torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
         torch.cuda.memory._record_memory_history(enabled=None)
 
+
 def optionally_autocast(autocast: bool):
-    print(f"Autocast: {autocast}")
-    return (
-        torch.autocast("cuda", dtype=torch.float16)
-        if autocast
-        else nullcontext()
-    )
+    return torch.autocast("cuda", dtype=torch.float16) if autocast else nullcontext()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark LLM")
