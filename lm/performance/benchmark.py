@@ -79,6 +79,9 @@ def benchmark(config: BenchmarkConfig):
     param_count = model.param_count()[1]
     print(f"Non-embedding param count: {param_count:,}")
 
+    if config.device == "cuda":
+        torch.set_float32_matmul_precision("high")
+
     if config.compile and config.device == "cuda":
         model = torch.compile(model)
 
