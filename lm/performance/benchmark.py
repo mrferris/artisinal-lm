@@ -54,28 +54,28 @@ def benchmark(config: BenchmarkConfig):
     )
     print(f"device={config.device}, compile={config.compile}, batch_size={config.batch_size}")
 
-    with optionally_autocast(config.autocast):
-        if config.reference:
-            model = ReferenceTransformerLM(
-                d_model=config.d_model,
-                vocab_size=config.vocab_size,
-                context_length=config.context_length,
-                num_layers=config.num_layers,
-                num_heads=config.num_heads,
-                d_ff=config.d_ff,
-                rope_theta=config.rope_theta,
-            )
-        else:
-            model = TransformerLM(
-                d_model=config.d_model,
-                vocab_size=config.vocab_size,
-                context_length=config.context_length,
-                num_layers=config.num_layers,
-                num_heads=config.num_heads,
-                d_ff=config.d_ff,
-                rope_theta=config.rope_theta,
-                device=config.device,
-            )
+    
+    if config.reference:
+        model = ReferenceTransformerLM(
+            d_model=config.d_model,
+            vocab_size=config.vocab_size,
+            context_length=config.context_length,
+            num_layers=config.num_layers,
+            num_heads=config.num_heads,
+            d_ff=config.d_ff,
+            rope_theta=config.rope_theta,
+        )
+    else:
+        model = TransformerLM(
+            d_model=config.d_model,
+            vocab_size=config.vocab_size,
+            context_length=config.context_length,
+            num_layers=config.num_layers,
+            num_heads=config.num_heads,
+            d_ff=config.d_ff,
+            rope_theta=config.rope_theta,
+            device=config.device,
+        )
     param_count = model.param_count()[1]
     print(f"Non-embedding param count: {param_count:,}")
 
@@ -128,17 +128,18 @@ def benchmark(config: BenchmarkConfig):
 
 
 def model_step(model, input, desired_output, forward_only, optimizer):
-    if forward_only:
-        with torch.no_grad():
+    with optionally_autocast(config.autocast):
+        if forward_only:
+            with torch.no_grad():
+                output = model(input)
+        else:
             output = model(input)
-    else:
-        output = model(input)
-        loss = cross_entropy(output, desired_output)
-        loss.backward()
-        if optimizer is not None:
-            optimizer.step()
+            loss = cross_entropy(output, desired_output)
+            loss.backward()
+            if optimizer is not None:
+                optimizer.step()
 
-    synchronize_accelerator(config.device)
+        synchronize_accelerator(config.device)
 
 
 def begin_memory_profiling(config):
