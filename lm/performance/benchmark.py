@@ -54,7 +54,6 @@ def benchmark(config: BenchmarkConfig):
     )
     print(f"device={config.device}, compile={config.compile}, batch_size={config.batch_size}")
 
-    
     if config.reference:
         model = ReferenceTransformerLM(
             d_model=config.d_model,
@@ -110,10 +109,28 @@ def benchmark(config: BenchmarkConfig):
 
     # Warmup steps
     for _ in range(config.warmup_steps):
-        model_step(model, input, desired_output, config.forward_only, optimizer)
+        model_step(
+            model,
+            input,
+            desired_output,
+            config.forward_only,
+            optimizer,
+            config.device,
+        )
 
     # Benchmarking
-    times = timeit.repeat(lambda: model_step(model, input, desired_output, config.forward_only, optimizer), number=1, repeat=config.benchmark_steps)
+    times = timeit.repeat(
+        lambda: model_step(
+            model,
+            input,
+            desired_output,
+            config.forward_only,
+            optimizer,
+            config.device,
+        ),
+        number=1,
+        repeat=config.benchmark_steps,
+    )
 
     end_memory_profiling(config)
 
@@ -127,7 +144,7 @@ def benchmark(config: BenchmarkConfig):
     print("=======================================================")
 
 
-def model_step(model, input, desired_output, forward_only, optimizer):
+def model_step(model, input, desired_output, forward_only, optimizer, device):
     with optionally_autocast(config.autocast):
         if forward_only:
             with torch.no_grad():
@@ -139,7 +156,7 @@ def model_step(model, input, desired_output, forward_only, optimizer):
             if optimizer is not None:
                 optimizer.step()
 
-        synchronize_accelerator(config.device)
+        synchronize_accelerator(device)
 
 
 def begin_memory_profiling(config):
