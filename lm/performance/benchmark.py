@@ -140,6 +140,11 @@ def benchmark(config: BenchmarkConfig):
     print(f"Times: {times}")
     print(f"Mean: {mean} seconds")
     print(f"Std dev: {stdev} seconds")
+    if config.device == "cuda":
+        peak_allocated = torch.cuda.max_memory_allocated()
+        peak_reserved = torch.cuda.max_memory_reserved()
+        print(f"Peak allocated memory: {peak_allocated / 1024**2:.2f} MiB")
+        print(f"Peak reserved memory:  {peak_reserved / 1024**2:.2f} MiB")
 
     print("=======================================================")
 
@@ -161,6 +166,7 @@ def model_step(model, input, desired_output, forward_only, optimizer, device):
 
 def begin_memory_profiling(config):
     if config.device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
         torch.cuda.memory._record_memory_history(
             stacks="all",
             max_entries=1000000,
