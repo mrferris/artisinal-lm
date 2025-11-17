@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import torch
 from reference.model import BasicsTransformerLM as ReferenceTransformerLM
 
+from lm.model.attention import MultiHeadSelfAttention, Rope
 from lm.model.transformer import TransformerLM
 from lm.performance.utils import synchronize_accelerator
 from lm.training.loss.cross_entropy import cross_entropy
@@ -36,6 +37,7 @@ class BenchmarkConfig:
     reference: bool
     optimization: bool
     autocast: bool
+    attention_only: bool
 
 
 def benchmark(config: BenchmarkConfig):
@@ -47,6 +49,7 @@ def benchmark(config: BenchmarkConfig):
     print("=======================================================")
     print("Running benchmarks: ")
     print(f"warmup_steps={config.warmup_steps}, benchmark_steps={config.benchmark_steps}, forward_only={config.forward_only}")
+    print(f"attention_only={config.attention_only}, optimization={config.optimization},             ")
     print("Model hyperparameters:")
     print(
         f"  d_model={config.d_model}, vocab_size={config.vocab_size}, context_length={config.context_length}\n"
@@ -65,18 +68,29 @@ def benchmark(config: BenchmarkConfig):
             rope_theta=config.rope_theta,
         )
     else:
-        model = TransformerLM(
-            d_model=config.d_model,
-            vocab_size=config.vocab_size,
-            context_length=config.context_length,
-            num_layers=config.num_layers,
-            num_heads=config.num_heads,
-            d_ff=config.d_ff,
-            rope_theta=config.rope_theta,
-            device=config.device,
-        )
-    param_count = model.param_count()[1]
-    print(f"Non-embedding param count: {param_count:,}")
+        if config.attention_only:
+            model = MultiHeadSelfAttention(
+                d_model=config.d_model,
+                num_heads=1,
+                rope=Rope(
+                    theta=config.rope_theta,
+                    d_k=config.d_model,
+                    max_seq_len=config.context_length,
+                ),
+            )
+        else:
+            model = TransformerLM(
+                d_model=config.d_model,
+                vocab_size=config.vocab_size,
+                context_length=config.context_length,
+                num_layers=config.num_layers,
+                num_heads=config.num_heads,
+                d_ff=config.d_ff,
+                rope_theta=config.rope_theta,
+                device=config.device,
+            )
+            param_count = model.param_count()[1]
+            print(f"Non-embedding param count: {param_count:,}")
 
     if config.device == "cuda":
         torch.set_float32_matmul_precision("high")
@@ -100,10 +114,15 @@ def benchmark(config: BenchmarkConfig):
     else:
         model.train()
 
-    input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
-    desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
+    if config.attention_only:
+        input = torch.randn(size=(config.context_length, config.d_model))
+        desired_output = torch.arange(config.context_length)
+    else:
+        input = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
+        desired_output = torch.randint(low=0, high=config.vocab_size - 1, size=(config.batch_size, config.context_length))
 
     model.to(config.device)
+
     input = input.to(config.device)
     desired_output = desired_output.to(config.device)
 
@@ -201,7 +220,8 @@ if __name__ == "__main__":
     parser.add_argument("--reference", dest="reference", action="store_true", help="Run reference model instead of artisinal")
     parser.add_argument("--optimization", dest="optimization", action="store_true", help="Benchmark optimization step")
     parser.add_argument("--autocast", dest="autocast", action="store_true", help="Autocast model to FP16")
-    parser.set_defaults(compile=True, forward_only=False, reference=False, optimization=False, autocast=False)
+    parser.add_argument("--attention-only", dest="attention_only", action="store_true", help="Benchmark attention mechanism only")
+    parser.set_defaults(compile=True, forward_only=False, reference=False, optimization=False, autocast=False, attention_only=False)
     args = parser.parse_args()
 
     config = BenchmarkConfig(
@@ -221,6 +241,7 @@ if __name__ == "__main__":
         reference=args.reference,
         optimization=args.optimization,
         autocast=args.autocast,
+        attention_only=args.attention_only,
     )
 
     benchmark(config=config)
